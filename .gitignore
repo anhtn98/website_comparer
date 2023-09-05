@@ -1,0 +1,4 @@
+data/*
+geckodriver.log
+lib/__pycache__
+*.png
