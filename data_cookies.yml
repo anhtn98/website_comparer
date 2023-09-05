@@ -1,0 +1,12 @@
+favorite_cars:
+  name: car_inquiry_list
+  value: ccAU2032742471
+passersby_recent_view:
+  name: uu_id
+  value: 068157bc-ac08-4c64-bbec-4ad6321a8244
+passersby_incomplete_inquiry:
+  name: car_incomplete_inquiry_list
+  value: ccAU3282399150
+user_id:  # for recent view, incomplete inquiry, shop favorites
+  name: user_id
+  value: eyJfcmFpbHMiOnsibWVzc2FnZSI6Ik5Uaz0iLCJleHAiOiIyMDQzLTA4LTMxVDA4OjE3OjMzLjYwN1oiLCJwdXIiOiJjb29raWUudXNlcl9pZCJ9fQ%3D%3D--5d9a5b47660e34eae1b7077db41f90119c05396b
