@@ -1,4 +1,6 @@
 data/*
+log/*
 geckodriver.log
 lib/__pycache__
 *.png
+*.csv

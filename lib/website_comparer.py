@@ -3,141 +3,165 @@ import re
 import time
 import csv
 from difflib import HtmlDiff
-from urllib.parse import urljoin
-from selenium import webdriver
+from urllib.parse import urlparse
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import WebDriverException
 from PIL import Image
-# import random
 from bs4 import BeautifulSoup
-import yaml
-# import pdb
+from pathlib import Path
+import pdb
+from lib.common import *
+from concurrent import futures
 
-EXCLUDE_KEYWORDS = ["/search/result", "usedcar/detail/", "usedcar/shop/", "inquiry", "/usedcar/ajax",
-                    "usedcar/search_area/", "usedcar/search_shashu/", "search/shop/pref/",
-                    "search_kodawari/pref/01", "usedcar/search_price", "page", "usedcar/area_top/",
-                    "usedcar/topic/lowprice", "usedcar/topic/ecocar", "usedcar/topic/4wd",
-                    "feature/search", "feature/eco_car", "feature/low_price"]
+EXCLUDE_KEYWORDS = [
+    # "/search/result",
+    "usedcar/detail/",
+    "usedcar/shop/",
+    "inquiry",
+    "/usedcar/ajax",
+    # "usedcar/search_area/",
+    # "usedcar/search_shashu/",
+    # "search/shop/pref/",
+    # "search_kodawari/pref/01",
+    # "usedcar/search_price",
+    "page",
+    # "usedcar/area_top/",
+    # "usedcar/topic/lowprice/",
+    # "usedcar/topic/ecocar/",
+    # "usedcar/topic/4wd/",
+    # "feature/search",
+    # "feature/eco_car",
+    # "feature/low_price"
+    ]
 
 class WebsiteComparer:
     def __init__(self, domain1, domain2, csv_name):
-        self.filter_paths = []
-        self.checked_paths = []
-        self.ignore_paths = []
+        self.logger = init_logger(csv_name)
+        self.csv_name = csv_name
         self.count = 0
-        self.data_yml = yaml.safe_load(open("data_cookies.yml", "r"))
         self.domain1 = domain1
         self.domain2 = domain2
-        self.driver1 = self._init_driver()
-        self.driver2 = self._init_driver()
-        self.csv_name = csv_name
-        # HEADER: 'Path', 'Folder name', 'HTML Pass?', 'Website 1 urls', 'Website 2 urls', 'Exception'
+        self.driver1 = init_driver(is_sp=True)
+        self.driver2 = init_driver(is_sp=True)
+        # HEADER: 'Path', 'Folder name', 'Pass?', 'Website 1 urls', 'Website 2 urls', 'Exception'
         self.old_paths_checked = self._read_csv(csv_name)
         # init writer using to append new data to file after read all the old data.
-        self.writer = self._init_csv_writer(csv_name)
+        self.writer = init_csv_writer(csv_name)
 
-        self.driver1.get("https://zigexn:zigexn2vn@kuruma-mb5.zigexn.vn/usedcar/favorites")
+        self.driver1.get(self.domain1 + "/favorites")
         self.driver2.get(self.domain2 + "/favorites")
-        cookie_names = ["favorite_cars", "passersby_recent_view", "passersby_incomplete_inquiry"]
-        self._add_cookies(self.driver1, cookie_names)
-        self._add_cookies(self.driver2, cookie_names)
+        # cookie_names = ["favorite_cars", "passersby_recent_view", "passersby_incomplete_inquiry"]
+        add_cookies(self.driver1, ["user_id_mb7"])
+        add_cookies(self.driver2, ["user_id_mb8"])
+
+    def count_folders(self, path):
+        if not os.path.exists(path):
+            return 0
+
+        folders = os.listdir(path)
+        return len([x for x in folders if os.path.isdir(os.path.join(path, x))])
+
+    def reach_max_folder(self, path):
+        sub_path = Path(path)
+        root_path = Path(*sub_path.parts[:5])
+        if self.count_folders(root_path) >= 15:
+            return True
+        while sub_path != root_path:
+            folder_count = self.count_folders(sub_path)
+            if folder_count >= 8:
+                return True
+            sub_path = sub_path.parent
+        return False
+
+    def get_html_and_urls(self, driver, url, num):
+        driver.get(url)
+        el = driver.find_element(By.TAG_NAME, 'body')
+        website_page_paths = get_page_paths(driver)
+        time.sleep(0.5)
+        el.screenshot(f"screenshot{num}.png")
+        website_html = self.get_prettified_html(driver)
+
+        return [website_html, website_page_paths]
 
     def compare_single_page(self, path):
         urls = self.find_website_urls(path)
         if len(urls) != 0:
-            print("Next", path)
             return urls
+
+        url1 = urljoin(self.domain1, path)
+        url2 = urljoin(self.domain2, path)
+        folder_name = f"data/{self.csv_name}{re.sub(r'[?#=&]', '/', path)}"
+        split_folder = folder_name.split("/")
+        name_removed = folder_name.rsplit('/', 1)[0]
+        if len(split_folder) > 5 and self.reach_max_folder(name_removed):
+            self.logger.info(f"Next => Max Folder: {path}")
+            return []
+
         self.count += 1
-        print(self.count)
-        url1 = self.domain1 + path
-        url2 = self.domain2 + path
-
-        folder_name = self.csv_name + re.sub(r"[?#=&]", "/", path)
- 
+        self.logger.info(f"{self.count}: Start compare: {path}")
+        os.makedirs(folder_name, exist_ok=True)
         try:
-            print("Start get", url1)
-            self.driver1.get(url1)
-            print("Start get", url2)
-            self.driver2.get(url2)
-            print("Get Done")
+            with futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # Đưa các nhiệm vụ vào thread pool
+                future1 = executor.submit(self.get_html_and_urls, self.driver1, url1, 1)
+                future2 = executor.submit(self.get_html_and_urls, self.driver2, url2, 2)
 
-            el1 = self.driver1.find_element(By.TAG_NAME, 'body')
-            el2 = self.driver2.find_element(By.TAG_NAME, 'body')
-            time.sleep(1)
-            # Get page URLs while wait ajax load data to take screenshot
-            website1_page_urls = self.get_page_urls(self.driver1, url1)
-            website2_page_urls = self.get_page_urls(self.driver2, url2)
+                # Chờ cả 2 nhiệm vụ được thực hiện xong
+                futures.wait([future1, future2])
 
-            os.makedirs(f"data/{folder_name}", exist_ok=True)
-            # Take screenshot for compare UI
-            print("Take screenshot")
-            el1.screenshot("screenshot1.png")
-            el2.screenshot("screenshot2.png")
+                # Lấy kết quả từ các nhiệm vụ
+                website1_html, website1_page_urls = future1.result()
+                website2_html, website2_page_urls = future2.result()
 
             image1 = Image.open("screenshot1.png")
             image2 = Image.open("screenshot2.png")
 
-            merge_imgs = self._append_images([image1, image2], aligment='top')
-            merge_imgs.save(f"data/{folder_name}/sc.png")
+            keys1 = self.get_global_key(website1_page_urls)
+            keys2 = self.get_global_key(website2_page_urls)
 
-            # Check for differences in page content
+            key_equal = self.compare_list(keys1, keys2)
+
+            merge_imgs = self._append_images([image1, image2], aligment='top')
+            merge_imgs.save(f"{folder_name}/sc.png")
+            
             diff = HtmlDiff()
-            website1_html = self.get_prettified_html(self.driver1)
-            website2_html = self.get_prettified_html(self.driver2)
             content_diff = diff.make_file(website1_html.splitlines(), website2_html.splitlines(), context=True)
             if "No Differences Found" in content_diff:
                 html_pass = True
-                print("----No differences found-----")
+                self.logger.info("    ----No differences found-----")
             else:
                 html_pass = False
-                with open(f"data/{folder_name}/diff.html", "w", encoding="utf-8") as file:
+                with open(f"{folder_name}/diff.html", "w", encoding="utf-8") as file:
                     file.write(content_diff)
-                print(f"Content differences saved to {folder_name}/diff.html.")
+                self.logger.info("    ++++++++DIFF+++++++")
 
-            self._write_to_csv([path, folder_name, html_pass, "\n".join(website1_page_urls), "\n".join(website2_page_urls), ''])
+            self._write_to_csv([path, folder_name, html_pass, "\n".join(website1_page_urls), "\n".join(website2_page_urls), '', key_equal])
 
-            return website1_page_urls + website2_page_urls
+            return list(set(website1_page_urls + website2_page_urls))
         except WebDriverException as ex:
-            self._write_to_csv([path, folder_name, '', '', '', ex])
-            print("Error:", ex)
+            self._write_to_csv([path, folder_name, '', '', '', ex, ''])
+            self.logger.info(f"    Error: {ex}")
             return []
 
     def compare_multiple_pages(self, path):
-        print("Start compare:", path)
-        urls = self.compare_single_page(path)
-        print("End compare:", path)
-        new_paths = []
-        for url in urls:
-            if "/usedcar" not in url or any(keyword in url for keyword in EXCLUDE_KEYWORDS):
-                self.ignore_paths.append(url)
-                continue
-
-            part = url.split("/usedcar")[1]
-            if part == "":
-                continue
-
-            if part not in self.filter_paths:
-                self.filter_paths.append(part)
-                new_paths.append(part)
-
-        for new_path in new_paths:
-            if new_path in self.checked_paths:
-                continue
-
-            if self.count >= 20:
+        remaining_paths = self.compare_single_page(path)
+        # path_pc_only = /usedcar/topic/carmodel
+        checked_paths = [path, '/usedcar/feature', '/usedcar/kcar']
+        while(remaining_paths):
+            if self.count >= 10:
                 return
+            current_path = remaining_paths.pop(0)
+            if "/usedcar" not in current_path or any(keyword in current_path for keyword in EXCLUDE_KEYWORDS):
+                continue
 
-            self.checked_paths.append(new_path)
-            self.compare_multiple_pages(new_path)
+            if current_path in checked_paths:
+                continue
 
-    def save_page_urls(self, url, page_urls, filename):
-        page_urls = list(set(page_urls))
-        with open(filename, "w") as file:
-            file.write(f"Page URLs for {url}:\n")
-            for page_url in page_urls:
-                file.write(page_url + "\n")
-        print(f"Page URLs saved to {filename}.")
-    
+            paths = self.compare_single_page(current_path)
+            checked_paths.append(current_path)
+            remaining_paths.extend(paths)
+        self.logger.info(f"Remaining urls left: {len(set(remaining_paths))}")
+
     def find_website_urls(self, test_path):
         if test_path in self.old_paths_checked:
             return self.old_paths_checked[test_path]
@@ -146,36 +170,40 @@ class WebsiteComparer:
     def get_prettified_html(self, driver):
         page_source = driver.page_source
         soup = BeautifulSoup(page_source, 'html.parser')
-    
-        elements = soup.select('input[name="authenticity_token"], [id^="batBeacon"], .ls-is-cached, .lazyloading, .lazyloaded, .recommend-list-sp')
+        ignore_els = [
+            '.image',
+            'input[name="authenticity_token"]',
+            '[id^="batBeacon"]',
+            '.ls-is-cached',
+            '.lazyloading',
+            '.lazyloaded',
+            '.box_new',
+            '.recommend-list-sp',
+            '#page-top',
+            '#ajax-recommends',
+            '.ranking_list',
+            '.ranking-shop',
+            'img',
+            '.status__label-list',
+            'information_board_pickup',
+            'result-list-item p0 ranking-list-item'
+        ]
+        elements = soup.select(", ".join(ignore_els))
 
         for element in elements:
             element.extract()
+
+        self._remove_domain_from_links(soup, 'a', 'href')
+        self._remove_domain_from_links(soup, 'form', 'action')
     
         return soup.body.prettify()
-
-    def get_page_urls(self, driver, url):
-        links = driver.find_elements(By.TAG_NAME, "a")
-
-        page_urls = []
-        for link in links:
-            href = link.get_attribute("href")
-            if href and not href.startswith("#"):
-                page_url = urljoin(url, href)
-                if page_url not in page_urls:
-                    page_urls.append(page_url)
-
-        return page_urls
-
-    def _init_driver(self):
-        user_agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1"
-        options = webdriver.FirefoxOptions()
-        options.add_argument("--headless")
-        options.set_preference("general.useragent.override", user_agent)
-        driver = webdriver.Firefox(options=options)
-        driver.set_window_size(375,812)
-        driver.set_page_load_timeout(20)
-        return driver
+    
+    def _remove_domain_from_links(self, soup, tag_name, attribute):
+        for tag in soup.find_all(tag_name):
+            attr_value = tag.get(attribute)
+            if attr_value:
+                new_value = urlparse(attr_value).path
+                tag[attribute] = new_value
 
     def _read_csv(self, file_name):
         try:
@@ -187,21 +215,12 @@ class WebsiteComparer:
                     data[row[0]] = row[3].split("\n") + row[4].split("\n")
 
             return data
-        except Exception as ex:
-            print(ex)
+        except FileNotFoundError:
+            self.logger.info(f"File not found. New file created: data/{file_name}.csv")
             return {}
 
-    def _add_cookies(self, driver, names):
-        for name in names:
-            driver.add_cookie(self.data_yml[name])
-
-    def _init_csv_writer(self, file_name):
-        file = open(f"data/{file_name}.csv", 'a', newline='')
-        writer = csv.writer(file)
-        return writer
-
     def _write_to_csv(self, data):
-        self.writer.writerow(data)
+        write_to_csv(self.writer, data)
 
     def _append_images(self, images, direction='horizontal', bg_color=(255,255,255), aligment='center'):
         widths, heights = zip(*(i.size for i in images))
@@ -235,3 +254,23 @@ class WebsiteComparer:
                 offset += im.size[1]
 
         return new_im
+ 
+    def compare_list(self, l1, l2):
+        l1.sort()
+        l2.sort()
+        print(l1)
+        print(l2)
+        if (l1 == l2):
+            return True
+        return False
+
+    def get_global_key(self, urls):
+        keys = []
+        for url in urls:
+            if "usedcar/detail/" not in url and "usedcar/shop/" not in url:
+                continue
+            if 'stock' in url:
+                url = url.split("/stock")[0]
+            key = url.rsplit("/", 1)[1]
+            keys.append(key)
+        return keys
