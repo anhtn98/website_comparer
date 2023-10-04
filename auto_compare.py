@@ -23,8 +23,14 @@ def select_type():
 if __name__ == "__main__":
     domain1 = "https://kuruma-mb7.zigexn.vn/usedcar"
     domain2 = "https://kuruma-mb8.zigexn.vn/usedcar"
+    sp_asw = {
+        'y': True,
+        'n': False
+    }
     csv_name = input("Type csv name: ")
-    comparer = WebsiteComparer(domain1, domain2, csv_name=csv_name)
+    is_sp = input("Crawl by smartphone?(y/n):")
+
+    comparer = WebsiteComparer(domain1, domain2, csv_name=csv_name, is_sp=sp_asw[is_sp])
     
     compare_type, path = select_type()
     start_time = time.time()

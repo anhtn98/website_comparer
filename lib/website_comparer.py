@@ -35,14 +35,14 @@ EXCLUDE_KEYWORDS = [
     ]
 
 class WebsiteComparer:
-    def __init__(self, domain1, domain2, csv_name):
+    def __init__(self, domain1, domain2, csv_name, is_sp):
         self.logger = init_logger(csv_name)
         self.csv_name = csv_name
         self.count = 0
         self.domain1 = domain1
         self.domain2 = domain2
-        self.driver1 = init_driver(is_sp=True)
-        self.driver2 = init_driver(is_sp=True)
+        self.driver1 = init_driver(is_sp=is_sp)
+        self.driver2 = init_driver(is_sp=is_sp)
         # HEADER: 'Path', 'Folder name', 'Pass?', 'Website 1 urls', 'Website 2 urls', 'Exception'
         self.old_paths_checked = self._read_csv(csv_name)
         # init writer using to append new data to file after read all the old data.
@@ -68,7 +68,7 @@ class WebsiteComparer:
             return True
         while sub_path != root_path:
             folder_count = self.count_folders(sub_path)
-            if folder_count >= 8:
+            if folder_count >= 3:
                 return True
             sub_path = sub_path.parent
         return False
@@ -76,10 +76,11 @@ class WebsiteComparer:
     def get_html_and_urls(self, driver, url, num):
         driver.get(url)
         el = driver.find_element(By.TAG_NAME, 'body')
-        website_page_paths = get_page_paths(driver)
         time.sleep(0.5)
+        website_page_paths = get_page_paths(driver)
         el.screenshot(f"screenshot{num}.png")
-        website_html = self.get_prettified_html(driver)
+        ignore_els = self.ignore_els(url)
+        website_html = self.get_prettified_html(driver, ignore_els)
 
         return [website_html, website_page_paths]
 
@@ -94,7 +95,7 @@ class WebsiteComparer:
         split_folder = folder_name.split("/")
         name_removed = folder_name.rsplit('/', 1)[0]
         if len(split_folder) > 5 and self.reach_max_folder(name_removed):
-            self.logger.info(f"Next => Max Folder: {path}")
+            print(f"Next => Max Folder: {path}")
             return []
 
         self.count += 1
@@ -116,10 +117,10 @@ class WebsiteComparer:
             image1 = Image.open("screenshot1.png")
             image2 = Image.open("screenshot2.png")
 
-            keys1 = self.get_global_key(website1_page_urls)
-            keys2 = self.get_global_key(website2_page_urls)
+            # keys1 = self.get_global_key(website1_page_urls)
+            # keys2 = self.get_global_key(website2_page_urls)
 
-            key_equal = self.compare_list(keys1, keys2)
+            # key_equal = self.compare_list(keys1, keys2)
 
             merge_imgs = self._append_images([image1, image2], aligment='top')
             merge_imgs.save(f"{folder_name}/sc.png")
@@ -135,7 +136,7 @@ class WebsiteComparer:
                     file.write(content_diff)
                 self.logger.info("    ++++++++DIFF+++++++")
 
-            self._write_to_csv([path, folder_name, html_pass, "\n".join(website1_page_urls), "\n".join(website2_page_urls), '', key_equal])
+            self._write_to_csv([path, folder_name, html_pass, "\n".join(website1_page_urls), "\n".join(website2_page_urls), ''])
 
             return list(set(website1_page_urls + website2_page_urls))
         except WebDriverException as ex:
@@ -144,11 +145,27 @@ class WebsiteComparer:
             return []
 
     def compare_multiple_pages(self, path):
-        remaining_paths = self.compare_single_page(path)
-        # path_pc_only = /usedcar/topic/carmodel
-        checked_paths = [path, '/usedcar/feature', '/usedcar/kcar']
+        extend_paths = [
+            '/usedcar/feature/top', #pc, sp
+            '/usedcar/feature/search', #pc, sp
+            '/usedcar/feature/low_price', #pc, sp
+            '/usedcar/feature/eco_car', #pc, sp
+            '/usedcar/feature/Seasonal/1', #pc, sp
+            '/usedcar/feature/Seasonal/2', #pc, sp
+            # '/usedcar/kcar', #sp
+            '/usedcar/topic/carmodel', #pc
+            '/usedcar/new_arrival_mail', #pc
+            '/usedcar/new_arrival_line', #pc
+            # '/usedcar/area_top/hokkaido',
+            # '/usedcar/area_top/hokushinetsu',
+            # '/usedcar/area_top/kansai',
+            # '/usedcar/area_top/kanto',
+            # '/usedcar/area_top/kyushu',
+        ]
+        remaining_paths = self.compare_single_page(path) +  extend_paths
+        checked_paths = [path, '/usedcar/logout', '/usedcar/recent_search']
         while(remaining_paths):
-            if self.count >= 10:
+            if self.count >= 5000:
                 return
             current_path = remaining_paths.pop(0)
             if "/usedcar" not in current_path or any(keyword in current_path for keyword in EXCLUDE_KEYWORDS):
@@ -160,6 +177,7 @@ class WebsiteComparer:
             paths = self.compare_single_page(current_path)
             checked_paths.append(current_path)
             remaining_paths.extend(paths)
+            print(f"Remaining urls left: {len(set(remaining_paths))}")
         self.logger.info(f"Remaining urls left: {len(set(remaining_paths))}")
 
     def find_website_urls(self, test_path):
@@ -167,27 +185,10 @@ class WebsiteComparer:
             return self.old_paths_checked[test_path]
         return []
 
-    def get_prettified_html(self, driver):
+    def get_prettified_html(self, driver, ignore_els):
         page_source = driver.page_source
         soup = BeautifulSoup(page_source, 'html.parser')
-        ignore_els = [
-            '.image',
-            'input[name="authenticity_token"]',
-            '[id^="batBeacon"]',
-            '.ls-is-cached',
-            '.lazyloading',
-            '.lazyloaded',
-            '.box_new',
-            '.recommend-list-sp',
-            '#page-top',
-            '#ajax-recommends',
-            '.ranking_list',
-            '.ranking-shop',
-            'img',
-            '.status__label-list',
-            'information_board_pickup',
-            'result-list-item p0 ranking-list-item'
-        ]
+
         elements = soup.select(", ".join(ignore_els))
 
         for element in elements:
@@ -258,8 +259,6 @@ class WebsiteComparer:
     def compare_list(self, l1, l2):
         l1.sort()
         l2.sort()
-        print(l1)
-        print(l2)
         if (l1 == l2):
             return True
         return False
@@ -274,3 +273,43 @@ class WebsiteComparer:
             key = url.rsplit("/", 1)[1]
             keys.append(key)
         return keys
+
+    def ignore_els(self, url):
+        ignore_els = [
+            '.image',
+            'input[name="authenticity_token"]',
+            '[id^="batBeacon"]',
+            '.ls-is-cached',
+            '.lazyloading',
+            '.lazyloaded',
+            '.box_new',
+            '.recommend-list-sp',
+            '#page-top',
+            '#ajax-recommends',
+            '.ranking_list',
+            '.ranking-shop',
+            'img',
+            '.status__label-list',
+            '.information_board_pickup',
+            '.ranking-list-item',
+            '.recommendation_item',
+            'source', # diff in url source image
+            '.heading-level-02.header-fixed', # diff in style opacity
+            '.favorite_count',
+            '.recommendation_box_list',
+            'script',
+            '.usedResultList_item', # pc
+            '.resultModePhoto', #pc
+            '#user_search',
+            '.internal-links-list.cf', # recommend result
+            '.table_shop_pickup', # information board - pc
+            '.information_board_pickup' # information board - sp - tmp
+        ]
+
+        if "feature" in url or 'search/result' in url or 'detail' in url:
+            ignore_els += ['.balloon_message', '.result-wrap', '.review_detail_slider']
+        elif "area_top" in url or "gd_city" in url:
+            ignore_els.append('#resultWrapper')
+        elif "topic" in url:
+            ignore_els += ['iframe', 'noscript', 'meta']
+        return ignore_els
