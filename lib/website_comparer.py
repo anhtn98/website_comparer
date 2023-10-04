@@ -68,7 +68,7 @@ class WebsiteComparer:
             return True
         while sub_path != root_path:
             folder_count = self.count_folders(sub_path)
-            if folder_count >= 3:
+            if folder_count >= 8:
                 return True
             sub_path = sub_path.parent
         return False
@@ -76,10 +76,10 @@ class WebsiteComparer:
     def get_html_and_urls(self, driver, url, num):
         driver.get(url)
         el = driver.find_element(By.TAG_NAME, 'body')
-        time.sleep(0.5)
+        ignore_els = self.ignore_els(url)
+        time.sleep(1)
         website_page_paths = get_page_paths(driver)
         el.screenshot(f"screenshot{num}.png")
-        ignore_els = self.ignore_els(url)
         website_html = self.get_prettified_html(driver, ignore_els)
 
         return [website_html, website_page_paths]
@@ -153,6 +153,7 @@ class WebsiteComparer:
             '/usedcar/feature/Seasonal/1', #pc, sp
             '/usedcar/feature/Seasonal/2', #pc, sp
             # '/usedcar/kcar', #sp
+            # '/usedcar/shop/gcs211859002/stock', #sp
             '/usedcar/topic/carmodel', #pc
             '/usedcar/new_arrival_mail', #pc
             '/usedcar/new_arrival_line', #pc
@@ -303,7 +304,8 @@ class WebsiteComparer:
             '#user_search',
             '.internal-links-list.cf', # recommend result
             '.table_shop_pickup', # information board - pc
-            '.information_board_pickup' # information board - sp - tmp
+            # '.information_board_pickup', # information board - sp - tmp
+            '.btn_line', # login/logout button
         ]
 
         if "feature" in url or 'search/result' in url or 'detail' in url:
